@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist gettext-domain="memory-guard">
+
+  <schema id="org.gnome.shell.extensions.memory-guard"
+          path="/org/gnome/shell/extensions/memory-guard/">
+
+    <!-- RAM usage threshold in percent (50–100). Dialog appears when exceeded. -->
+    <key name="ram-threshold" type="i">
+      <default>90</default>
+      <summary>RAM Threshold (%)</summary>
+      <description>
+        Percentage of RAM usage that triggers the warning dialog.
+      </description>
+      <range min="50" max="100"/>
+    </key>
+
+    <!-- Swap usage threshold in percent (50–100). -->
+    <key name="swap-threshold" type="i">
+      <default>90</default>
+      <summary>Swap Threshold (%)</summary>
+      <description>
+        Percentage of Swap usage that triggers the warning dialog.
+      </description>
+      <range min="50" max="100"/>
+    </key>
+
+    <!-- Polling interval in seconds (1–30). -->
+    <key name="check-interval" type="i">
+      <default>3</default>
+      <summary>Check Interval (seconds)</summary>
+      <description>
+        How often to sample /proc/meminfo, in seconds.
+      </description>
+      <range min="1" max="30"/>
+    </key>
+
+    <!-- Cool-down after closing the dialog, in seconds (10–600). -->
+    <key name="cooldown-time" type="i">
+      <default>60</default>
+      <summary>Cool-down Time (seconds)</summary>
+      <description>
+        Minimum wait time after dismissing a dialog before a new one can appear.
+      </description>
+      <range min="10" max="600"/>
+    </key>
+
+  </schema>
+
+</schemalist>

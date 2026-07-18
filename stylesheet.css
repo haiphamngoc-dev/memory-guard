@@ -1,0 +1,44 @@
+/* ============================================================
+ * System Memory Guard — Modal Dialog Styles
+ * ============================================================
+ * These classes are applied to the custom ModalDialog so it
+ * stands out clearly as a system-level warning.
+ * ============================================================ */
+
+/* Main dialog container */
+.memory-guard-dialog .modal-dialog-content-box {
+  padding: 24px 32px;
+}
+
+/* Warning icon at the top */
+.memory-guard-icon {
+  icon-size: 64px;
+  color: #e74c3c;
+  margin-bottom: 16px;
+}
+
+/* Title text */
+.memory-guard-title {
+  font-size: 18pt;
+  font-weight: bold;
+  color: #e74c3c;
+  margin-bottom: 12px;
+  text-align: center;
+}
+
+/* Body / detail text */
+.memory-guard-body {
+  font-size: 11pt;
+  color: #deddda;
+  margin-bottom: 8px;
+  text-align: center;
+}
+
+/* Percentage highlight */
+.memory-guard-percent {
+  font-size: 13pt;
+  font-weight: bold;
+  color: #f9e44c;
+  text-align: center;
+  margin-bottom: 16px;
+}
