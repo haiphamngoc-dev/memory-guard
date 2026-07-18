@@ -2,8 +2,8 @@
  * System Memory Guard — extension.js
  * ============================================================
  * GNOME 45+ ESM extension that periodically reads /proc/meminfo,
- * calculates RAM & Swap usage, and pops a blocking ModalDialog
- * when either metric exceeds the user-configured threshold.
+ * calculates combined (RAM + Swap) usage, and pops a blocking
+ * ModalDialog when the combined usage exceeds the configured threshold.
  *
  * Key design points:
  *  • Uses GLib.file_get_contents to read /proc/meminfo (no
@@ -42,18 +42,18 @@ const MemoryWarningDialog = GObject.registerClass(
   class MemoryWarningDialog extends ModalDialog.ModalDialog {
     /**
      * @param {object}   params
-     * @param {number}   params.ramPercent   - Current RAM usage (0-100)
-     * @param {number}   params.swapPercent  - Current Swap usage (0-100)
-     * @param {number}   params.ramThreshold - Configured RAM threshold
-     * @param {number}   params.swapThreshold- Configured Swap threshold
-     * @param {function} params.onClose      - Callback invoked when user
-     *                                         dismisses the dialog
+     * @param {number}   params.ramPercent      - Current RAM usage (0-100)
+     * @param {number}   params.swapPercent     - Current Swap usage (0-100)
+     * @param {number}   params.combinedPercent - Combined (RAM+Swap) usage (0-100)
+     * @param {number}   params.memoryThreshold - Configured memory threshold
+     * @param {function} params.onClose         - Callback invoked when user
+     *                                            dismisses the dialog
      */
     constructor({
       ramPercent,
       swapPercent,
-      ramThreshold,
-      swapThreshold,
+      combinedPercent,
+      memoryThreshold,
       onClose,
     }) {
       super({
@@ -86,17 +86,11 @@ const MemoryWarningDialog = GObject.registerClass(
       contentBox.add_child(title);
 
       // Build a human-readable detail message
-      const lines = [];
-      if (ramPercent >= ramThreshold) {
-        lines.push(
-          `RAM usage: ${ramPercent.toFixed(1)}%  (threshold: ${ramThreshold}%)`,
-        );
-      }
-      if (swapPercent >= swapThreshold) {
-        lines.push(
-          `Swap usage: ${swapPercent.toFixed(1)}%  (threshold: ${swapThreshold}%)`,
-        );
-      }
+      const lines = [
+        `RAM usage:      ${ramPercent.toFixed(1)}%`,
+        `Swap usage:     ${swapPercent.toFixed(1)}%`,
+        `Combined usage: ${combinedPercent.toFixed(1)}%  (threshold: ${memoryThreshold}%)`,
+      ];
 
       const body = new St.Label({
         text:
@@ -310,7 +304,7 @@ export default class MemoryGuardExtension extends Extension {
    *
    * 1. Reads /proc/meminfo.
    * 2. Computes RAM used% and Swap used%.
-   * 3. Compares against thresholds from GSettings.
+   * 3. Compares combined usage against threshold from GSettings.
    * 4. If exceeded AND no dialog is open AND cool-down has
    *    expired → show the modal warning.
    */
@@ -332,19 +326,21 @@ export default class MemoryGuardExtension extends Extension {
     const swapPercent =
       info.swapTotal > 0 ? (swapUsed / info.swapTotal) * 100 : 0;
 
-    // --- Compare against thresholds ---
-    const ramThreshold = this._settings.get_int("ram-threshold");
-    const swapThreshold = this._settings.get_int("swap-threshold");
+    // --- Combined (RAM + Swap) usage ---
+    const totalMemory = info.memTotal + info.swapTotal;
+    const totalUsed = ramUsed + swapUsed;
+    const combinedPercent =
+      totalMemory > 0 ? (totalUsed / totalMemory) * 100 : 0;
 
-    const ramExceeded = ramPercent >= ramThreshold;
-    const swapExceeded = info.swapTotal > 0 && swapPercent >= swapThreshold;
+    // --- Compare against threshold ---
+    const memoryThreshold = this._settings.get_int("memory-threshold");
 
-    if (ramExceeded || swapExceeded) {
+    if (combinedPercent >= memoryThreshold) {
       this._showWarningDialog(
         ramPercent,
         swapPercent,
-        ramThreshold,
-        swapThreshold,
+        combinedPercent,
+        memoryThreshold,
       );
     }
   }
@@ -359,19 +355,19 @@ export default class MemoryGuardExtension extends Extension {
    * The dialog is modal (pushModal): it grabs all input so the
    * user cannot interact with anything else until they press OK.
    *
-   * @param {number} ramPercent    - current RAM usage %
-   * @param {number} swapPercent   - current Swap usage %
-   * @param {number} ramThreshold  - configured RAM threshold
-   * @param {number} swapThreshold - configured Swap threshold
+   * @param {number} ramPercent      - current RAM usage %
+   * @param {number} swapPercent     - current Swap usage %
+   * @param {number} combinedPercent - current combined (RAM+Swap) usage %
+   * @param {number} memoryThreshold - configured memory threshold
    */
-  _showWarningDialog(ramPercent, swapPercent, ramThreshold, swapThreshold) {
+  _showWarningDialog(ramPercent, swapPercent, combinedPercent, memoryThreshold) {
     this._dialogOpen = true;
 
     this._dialog = new MemoryWarningDialog({
       ramPercent,
       swapPercent,
-      ramThreshold,
-      swapThreshold,
+      combinedPercent,
+      memoryThreshold,
       onClose: () => {
         // Called when the user presses OK
         this._dialogOpen = false;

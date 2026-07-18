@@ -4,22 +4,13 @@
   <schema id="org.gnome.shell.extensions.memory-guard"
     path="/org/gnome/shell/extensions/memory-guard/">
 
-    <!-- RAM usage threshold in percent (50–100). Dialog appears when exceeded. -->
-    <key name="ram-threshold" type="i">
+    <!-- Combined memory usage threshold in percent (50–100).
+         Dialog appears when (RAM used + Swap used) / (RAM total + Swap total) >= this value. -->
+    <key name="memory-threshold" type="i">
       <default>90</default>
-      <summary>RAM Threshold (%)</summary>
+      <summary>Memory Threshold (%)</summary>
       <description>
-        Percentage of RAM usage that triggers the warning dialog.
-      </description>
-      <range min="50" max="100" />
-    </key>
-
-    <!-- Swap usage threshold in percent (50–100). -->
-    <key name="swap-threshold" type="i">
-      <default>90</default>
-      <summary>Swap Threshold (%)</summary>
-      <description>
-        Percentage of Swap usage that triggers the warning dialog.
+        Percentage of combined (RAM + Swap) usage that triggers the warning dialog.
       </description>
       <range min="50" max="100" />
     </key>

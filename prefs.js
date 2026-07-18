@@ -46,45 +46,25 @@ export default class MemoryGuardPreferences extends ExtensionPreferences {
     });
     page.add(thresholdGroup);
 
-    // --- RAM Threshold (SpinRow) ---
-    const ramRow = new Adw.SpinRow({
-      title: "RAM Threshold",
-      subtitle: "Show warning when RAM usage exceeds this %",
+    // --- Memory Threshold (SpinRow) ---
+    const memoryRow = new Adw.SpinRow({
+      title: "Memory Threshold",
+      subtitle: "Show warning when combined (RAM + Swap) usage exceeds this %",
       adjustment: new Gtk.Adjustment({
         lower: 50,
         upper: 100,
         step_increment: 1,
         page_increment: 5,
-        value: settings.get_int("ram-threshold"),
+        value: settings.get_int("memory-threshold"),
       }),
     });
     settings.bind(
-      "ram-threshold",
-      ramRow,
+      "memory-threshold",
+      memoryRow,
       "value",
       Gio.SettingsBindFlags.DEFAULT,
     );
-    thresholdGroup.add(ramRow);
-
-    // --- Swap Threshold (SpinRow) ---
-    const swapRow = new Adw.SpinRow({
-      title: "Swap Threshold",
-      subtitle: "Show warning when Swap usage exceeds this %",
-      adjustment: new Gtk.Adjustment({
-        lower: 50,
-        upper: 100,
-        step_increment: 1,
-        page_increment: 5,
-        value: settings.get_int("swap-threshold"),
-      }),
-    });
-    settings.bind(
-      "swap-threshold",
-      swapRow,
-      "value",
-      Gio.SettingsBindFlags.DEFAULT,
-    );
-    thresholdGroup.add(swapRow);
+    thresholdGroup.add(memoryRow);
 
     // =====================================================
     // GROUP 2 — Timing Settings
