@@ -6,6 +6,10 @@
 
 > A GNOME Shell extension that monitors RAM and Swap usage in real-time and displays a **blocking modal dialog** when memory consumption exceeds user-defined thresholds — preventing accidental system freezes before they happen.
 
+<p align="center">
+  <img src="assets/screenshot.png" alt="System Memory Guard — Warning Dialog" width="800" />
+</p>
+
 ---
 
 ## Features
