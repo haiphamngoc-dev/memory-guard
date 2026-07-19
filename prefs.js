@@ -38,6 +38,28 @@ export default class MemoryGuardPreferences extends ExtensionPreferences {
     window.add(page);
 
     // =====================================================
+    // GROUP 0 — Panel Indicator
+    // =====================================================
+    const indicatorGroup = new Adw.PreferencesGroup({
+      title: "Panel Indicator",
+      description: "Control the indicator shown in the top panel.",
+    });
+    page.add(indicatorGroup);
+
+    // --- Show Indicator toggle ---
+    const indicatorRow = new Adw.SwitchRow({
+      title: "Show Indicator",
+      subtitle: "Display memory usage in the top panel",
+    });
+    settings.bind(
+      "show-indicator",
+      indicatorRow,
+      "active",
+      Gio.SettingsBindFlags.DEFAULT,
+    );
+    indicatorGroup.add(indicatorRow);
+
+    // =====================================================
     // GROUP 1 — Threshold Settings
     // =====================================================
     const thresholdGroup = new Adw.PreferencesGroup({
@@ -79,7 +101,7 @@ export default class MemoryGuardPreferences extends ExtensionPreferences {
     // --- Check Interval ---
     const intervalRow = new Adw.SpinRow({
       title: "Check Interval",
-      subtitle: "Seconds between each memory check (1–30)",
+      subtitle: "Seconds between each memory check (1-30)",
       adjustment: new Gtk.Adjustment({
         lower: 1,
         upper: 30,
@@ -99,7 +121,7 @@ export default class MemoryGuardPreferences extends ExtensionPreferences {
     // --- Cool-down Time ---
     const cooldownRow = new Adw.SpinRow({
       title: "Cool-down Time",
-      subtitle: "Seconds to wait before showing another warning (10–600)",
+      subtitle: "Seconds to wait before showing another warning (10-600)",
       adjustment: new Gtk.Adjustment({
         lower: 10,
         upper: 600,

@@ -130,49 +130,30 @@ memory-guard/
 
 ## Architecture Overview
 
-```text
-┌───────────────────────────────────────────────────────────────────────┐
-│                         GNOME Shell Process                           │
-│                                                                       │
-│  ┌──────────────────┐   GLib.timeout      ┌────────────────────────┐  │
-│  │  GSettings       │   (every N sec)     │  _checkMemory()        │  │
-│  │                  │ ◄──────────────────► │                       │  │
-│  │ memory-threshold │                     │  1. Read /proc/meminfo │  │
-│  │ check-interval   │                     │  2. Calc RAM%, Swap%   │  │
-│  │ cooldown-time    │                     │  3. Calc Combined%     │  │
-│  └──────────────────┘                     │  4. Compare threshold  │  │
-│         ▲                                 └───────────┬────────────┘  │
-│         │                                             │               │
-│         │                                  combined >= threshold?     │
-│         │                                             │               │
-│         │                                             ▼               │
-│         │                              ┌─────────────────────────┐    │
-│         │                              │  MemoryWarningDialog    │    │
-│         │                              │  (ModalDialog)          │    │
-│         │                              │                         │    │
-│         │                              │  RAM:      85.2%        │    │
-│         │                              │  Swap:     95.0%        │    │
-│         │                              │  Combined: 90.1%        │    │
-│         │                              │  (threshold: 90%)       │    │
-│         │                              │                         │    │
-│         │                              │       [ OK ]            │    │
-│         │                              └────────────┬────────────┘    │
-│         │                                           │                 │
-│         │                                   _startCooldown()          │
-│         │                                   (suppress N sec)          │
-│         │                                           │                 │
-│         └───────────────────────────────────────────┘                 │
-└───────────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    subgraph GNOME["GNOME Shell Process"]
+        GS["GSettings</br></br>memory-threshold</br>check-interval</br>cooldown-time"]
+        CM["_checkMemory()</br></br>1. Read /proc/meminfo</br>2. Calc RAM%, Swap%</br>3. Calc Combined%</br>4. Compare threshold"]
+        THR{"combined >= threshold?"}
+        DLG["MemoryWarningDialog</br>(ModalDialog)</br>RAM:      85.2%</br>Swap:     95.0%</br>Combined: 90.1%</br>(threshold: 90%)</br>[ OK ]"]
+        CD["_startCooldown()</br>(suppress N sec)"]
+
+        GS -- "GLib.timeout</br>(every N sec)" --> CM
+        CM --> THR
+        THR -- Yes --> DLG
+        DLG -- "User clicks OK" --> CD
+        CD --> GS
+    end
 ```
 
 ### Data Flow
 
-```text
-/proc/meminfo → _readMeminfo() → _checkMemory() → _showWarningDialog()
-                                        │                    │
-                                  guards check:         onClose callback:
-                                  • _dialogOpen?        • _dialogOpen = false
-                                  • _coolingDown?       • _startCooldown()
+```mermaid
+flowchart LR
+    A["/proc/meminfo"] --> B["_readMeminfo()"] --> C["_checkMemory()"] --> D["_showWarningDialog()"]
+    C -. "guards check" .-> G["• _dialogOpen?\n• _coolingDown?"]
+    D -. "onClose callback" .-> H["• _dialogOpen = false\n• _startCooldown()"]
 ```
 
 ### Warning Trigger Formula
@@ -275,14 +256,14 @@ MemoryGuardPreferences (extends ExtensionPreferences)
     │
     ├── GROUP 1: Warning Thresholds
     │   └── Adw.SpinRow "Memory Threshold"  ←→  GSettings "memory-threshold"
-    │       (50–100%, step: 1, page: 5)
+    │       (50-100%, step: 1, page: 5)
     │
     └── GROUP 2: Timing
         ├── Adw.SpinRow "Check Interval"    ←→  GSettings "check-interval"
-        │   (1–30 sec, step: 1, page: 5)
+        │   (1-30 sec, step: 1, page: 5)
         │
         └── Adw.SpinRow "Cool-down Time"    ←→  GSettings "cooldown-time"
-            (10–600 sec, step: 5, page: 30)
+            (10-600 sec, step: 5, page: 30)
 ```
 
 **Binding mechanism**: `settings.bind()` with `Gio.SettingsBindFlags.DEFAULT` creates a **two-way binding** — UI changes update GSettings immediately, and GSettings changes (e.g., from CLI) update the UI.
@@ -295,9 +276,9 @@ MemoryGuardPreferences (extends ExtensionPreferences)
 
 | Key                | Type  | Default | Range  | Description                                         |
 | ------------------ | ----- | ------- | ------ | --------------------------------------------------- |
-| `memory-threshold` | `int` | `90`    | 50–100 | Combined (RAM+Swap) threshold that triggers warning |
-| `check-interval`   | `int` | `3`     | 1–30   | Seconds between `/proc/meminfo` reads               |
-| `cooldown-time`    | `int` | `60`    | 10–600 | Seconds to suppress dialog after dismissal          |
+| `memory-threshold` | `int` | `90`    | 50-100 | Combined (RAM+Swap) threshold that triggers warning |
+| `check-interval`   | `int` | `3`     | 1-30   | Seconds between `/proc/meminfo` reads               |
+| `cooldown-time`    | `int` | `60`    | 10-600 | Seconds to suppress dialog after dismissal          |
 
 **After modifying the schema**, you MUST recompile:
 
@@ -347,22 +328,12 @@ This is **St (Shell Toolkit) CSS**, not standard web CSS. St supports a subset o
 
 ### Quick Iteration Cycle
 
-```text
-1. Edit source files (extension.js, prefs.js, stylesheet.css, gschema.xml)
-          │
-          ▼
-2. If schema changed: glib-compile-schemas schemas/
-          │
-          ▼
-3. Restart GNOME Shell to reload extension:
-   • Wayland: Log out → Log in
-   • X11:     Alt+F2 → 'r' → Enter
-          │
-          ▼
-4. Check logs: journalctl -f -o cat /usr/bin/gnome-shell
-          │
-          ▼
-5. Test: lower threshold to 1% to trigger dialog immediately
+```mermaid
+flowchart TD
+    A["1. Edit source files\n(extension.js, prefs.js,\nstylesheet.css, gschema.xml)"] --> B["2. If schema changed:\nglib-compile-schemas schemas/"]
+    B --> C["3. Restart GNOME Shell\n─────────────────────\nWayland: Log out → Log in\nX11: Alt+F2 → 'r' → Enter"]
+    C --> D["4. Check logs:\njournalctl -f -o cat\n/usr/bin/gnome-shell"]
+    D --> E["5. Test: lower threshold\nto 1% to trigger dialog"]
 ```
 
 ### Nested GNOME Shell (X11 Only)

@@ -4,7 +4,7 @@
   <schema id="org.gnome.shell.extensions.memory-guard"
     path="/org/gnome/shell/extensions/memory-guard/">
 
-    <!-- Combined memory usage threshold in percent (50–100).
+    <!-- Combined memory usage threshold in percent (50-100).
          Dialog appears when (RAM used + Swap used) / (RAM total + Swap total) >= this value. -->
     <key name="memory-threshold" type="i">
       <default>90</default>
@@ -15,7 +15,7 @@
       <range min="50" max="100" />
     </key>
 
-    <!-- Polling interval in seconds (1–30). -->
+    <!-- Polling interval in seconds (1-30). -->
     <key name="check-interval" type="i">
       <default>3</default>
       <summary>Check Interval (seconds)</summary>
@@ -25,7 +25,7 @@
       <range min="1" max="30" />
     </key>
 
-    <!-- Cool-down after closing the dialog, in seconds (10–600). -->
+    <!-- Cool-down after closing the dialog, in seconds (10-600). -->
     <key name="cooldown-time" type="i">
       <default>60</default>
       <summary>Cool-down Time (seconds)</summary>
@@ -33,6 +33,15 @@
         Minimum wait time after dismissing a dialog before a new one can appear.
       </description>
       <range min="10" max="600" />
+    </key>
+
+    <!-- Show/hide panel indicator in top bar. -->
+    <key name="show-indicator" type="b">
+      <default>true</default>
+      <summary>Show Panel Indicator</summary>
+      <description>
+        Whether to show a memory usage indicator in the top panel.
+      </description>
     </key>
 
   </schema>

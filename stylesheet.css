@@ -12,7 +12,6 @@
 
 /* Warning icon at the top */
 .memory-guard-icon {
-  icon-size: 64px;
   color: #e74c3c;
   margin-bottom: 16px;
 }
@@ -41,4 +40,29 @@
   color: #f9e44c;
   text-align: center;
   margin-bottom: 16px;
+}
+
+/* ============================================================
+ * Panel Indicator Styles
+ * ============================================================ */
+
+/* Indicator icon in the top panel */
+.memory-guard-indicator-icon {
+  margin-right: 4px;
+}
+
+/* Percentage label next to the icon */
+.memory-guard-indicator-label {
+  font-size: 13px;
+  font-weight: bold;
+}
+
+/* Warning state (combined >= 70%) */
+.memory-guard-warning {
+  color: #f9e44c;
+}
+
+/* Critical state (combined >= threshold) */
+.memory-guard-critical {
+  color: #e74c3c;
 }

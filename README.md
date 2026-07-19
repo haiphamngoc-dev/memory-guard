@@ -18,7 +18,7 @@
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | **Real-time Monitoring**   | Periodically reads `/proc/meminfo` to track RAM and Swap usage with zero external dependencies                     |
 | **Modal Warning Dialog**   | Full-screen blocking dialog (`pushModal`) that grabs all keyboard & mouse focus — the user **must** acknowledge it |
-| **Independent Thresholds** | Configure RAM and Swap warning levels separately (50%–100%)                                                        |
+| **Independent Thresholds** | Configure RAM and Swap warning levels separately (50%-100%)                                                        |
 | **Anti-spam Protection**   | Built-in cool-down timer prevents repeated dialog popups when memory stays above threshold                         |
 | **Native Preferences UI**  | Modern libadwaita settings window integrated with GNOME's extension manager                                        |
 | **Clean Lifecycle**        | Proper `enable()`/`disable()` management — no memory leaks, no orphaned timers                                     |
@@ -27,56 +27,32 @@
 
 ## Architecture
 
-```text
-┌───────────────────────────────────────────────────────────────┐
-│                     GNOME Shell Process                       │
-│                                                               │
-│  ┌────────────────┐    GLib.timeout     ┌───────────────────┐ │
-│  │  GSettings     │ ◄──────────────────►│  Polling Loop     │ │
-│  │                │    (every N sec)    │  _checkMemory()   │ │
-│  │ ram-threshold  │                     │                   │ │
-│  │ swap-threshold │                     │  ┌──────────────┐ │ │
-│  │ check-interval │                     │  │ /proc/meminfo│ │ │
-│  │ cooldown-time  │                     │  │ GLib.file_   │ │ │
-│  └────────────────┘                     │  │ get_contents │ │ │
-│         ▲                               │  └──────┬───────┘ │ │
-│         │                               └─────────┼─────────┘ │
-│         │                                         │           │
-│         │                             exceeded threshold?     │
-│         │                                         │           │
-│         │                                         ▼           │
-│         │                            ┌────────────────────┐   │
-│         │                            │  ModalDialog       │   │
-│         │                            │  (pushModal)       │   │
-│         │                            │                    │   │
-│         │                            │  ┌────────────┐    │   │
-│         │                            │  │   [ OK ]   │    │   │
-│         │                            │  └─────┬──────┘    │   │
-│         │                            └────────┼───────────┘   │
-│         │                                     │               │
-│         │                              cool-down starts       │
-│         │                              (N seconds)            │
-│         │                                     │               │
-│         └─────────────────────────────────────┘               │
-└───────────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    subgraph GNOME["GNOME Shell Process"]
+        GS["GSettings</br></br>ram-threshold</br>swap-threshold</br>check-interval</br>cooldown-time"]
+        PL["Polling Loop</br>_checkMemory()"];
+        PROC["/proc/meminfo</br>GLib.file_get_contents"];
+        THR{"Exceeded</br>threshold?"};
+        DLG["ModalDialog</br>(pushModal)</br>[ OK ]"];
+        CD["Cool-down starts</br>(N seconds)"];
 
-┌───────────────────────────────────────────────────────────────┐
-│              Separate Process (Preferences)                   │
-│                                                               │
-│  ┌──────────────────────────────────────────────────────┐     │
-│  │  Adw.PreferencesWindow                               │     │
-│  │                                                      │     │
-│  │  ┌─ Warning Thresholds ───────────────────────────┐  │     │
-│  │  │  RAM Threshold   [██████████████░░] 90%        │  │     │
-│  │  │  Swap Threshold  [██████████████░░] 90%        │  │     │
-│  │  └────────────────────────────────────────────────┘  │     │
-│  │                                                      │     │
-│  │  ┌─ Timing ───────────────────────────────────────┐  │     │
-│  │  │  Check Interval   [3] seconds                  │  │     │
-│  │  │  Cool-down Time   [60] seconds                 │  │     │
-│  │  └────────────────────────────────────────────────┘  │     │
-│  └──────────────────────────────────────────────────────┘     │
-└───────────────────────────────────────────────────────────────┘
+        GS -- "GLib.timeout</br>(every N sec)" --> PL
+        PL --> PROC
+        PROC --> THR
+        THR -- Yes --> DLG
+        DLG -- "User clicks OK" --> CD
+        CD -- "Settings feedback" --> GS
+    end
+
+    subgraph PREFS["Separate Process (Preferences)"]
+        PW["Adw.PreferencesWindow"]
+        WT["Warning Thresholds</br></br>RAM Threshold  90%</br>Swap Threshold 90%"]
+        TM["Timing</br></br>Check Interval  3s</br>Cool-down Time 60s"]
+
+        PW --> WT
+        PW --> TM
+    end
 ```
 
 ---
@@ -162,10 +138,10 @@ gnome-extensions prefs memory-guard@haiphamngoc.dev
 
 | Setting            | Key              | Type  | Default | Range  | Description                                          |
 | ------------------ | ---------------- | ----- | ------- | ------ | ---------------------------------------------------- |
-| **RAM Threshold**  | `ram-threshold`  | `int` | `90`    | 50–100 | Warning triggers when RAM usage ≥ this percentage    |
-| **Swap Threshold** | `swap-threshold` | `int` | `90`    | 50–100 | Warning triggers when Swap usage ≥ this percentage   |
-| **Check Interval** | `check-interval` | `int` | `3`     | 1–30   | Seconds between each `/proc/meminfo` read            |
-| **Cool-down Time** | `cooldown-time`  | `int` | `60`    | 10–600 | Seconds to suppress new dialogs after dismissing one |
+| **RAM Threshold**  | `ram-threshold`  | `int` | `90`    | 50-100 | Warning triggers when RAM usage ≥ this percentage    |
+| **Swap Threshold** | `swap-threshold` | `int` | `90`    | 50-100 | Warning triggers when Swap usage ≥ this percentage   |
+| **Check Interval** | `check-interval` | `int` | `3`     | 1-30   | Seconds between each `/proc/meminfo` read            |
+| **Cool-down Time** | `cooldown-time`  | `int` | `60`    | 10-600 | Seconds to suppress new dialogs after dismissing one |
 
 ### CLI Configuration (via `gsettings`)
 
@@ -223,30 +199,16 @@ If the system has no swap configured (`SwapTotal = 0`), swap monitoring is autom
 
 Three independent guards prevent dialog flooding:
 
-```text
-_checkMemory() is called
-        │
-        ▼
-  ┌───────────────┐     Yes
-  │ _dialogOpen?  ├──────────► Skip (dialog already visible)
-  └──────┬────────┘
-         │ No
-         ▼
-  ┌────────────────┐    Yes
-  │ _coolingDown?  ├─────────► Skip (within cool-down window)
-  └──────┬─────────┘
-         │ No
-         ▼
-   Check thresholds
-         │
-         ▼
-  Exceeded? ──► Show ModalDialog
-                     │
-                User clicks OK
-                     │
-                     ▼
-              _startCooldown()
-              (blocks for N sec)
+```mermaid
+flowchart TD
+    A["_checkMemory() is called"] --> B{"_dialogOpen?"}
+    B -- Yes --> C["Skip\n(dialog already visible)"]
+    B -- No --> D{"_coolingDown?"}
+    D -- Yes --> E["Skip\n(within cool-down window)"]
+    D -- No --> F["Check thresholds"]
+    F --> G{"Exceeded?"}
+    G -- Yes --> H["Show ModalDialog"]
+    H -- "User clicks OK" --> I["_startCooldown()\n(blocks for N sec)"]
 ```
 
 1. **`_dialogOpen` flag** — no new dialog while one is already visible on screen

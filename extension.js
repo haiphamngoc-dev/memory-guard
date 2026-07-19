@@ -24,6 +24,9 @@ import Clutter from "gi://Clutter";
 
 // GNOME Shell internal modules (available only inside the shell process)
 import * as ModalDialog from "resource:///org/gnome/shell/ui/modalDialog.js";
+import * as PanelMenu from "resource:///org/gnome/shell/ui/panelMenu.js";
+import * as PopupMenu from "resource:///org/gnome/shell/ui/popupMenu.js";
+import * as Main from "resource:///org/gnome/shell/ui/main.js";
 
 import { Extension } from "resource:///org/gnome/shell/extensions/extension.js";
 
@@ -74,6 +77,7 @@ const MemoryWarningDialog = GObject.registerClass(
       // Warning icon
       const icon = new St.Icon({
         icon_name: "dialog-warning-symbolic",
+        icon_size: 64,
         style_class: "memory-guard-icon",
       });
       contentBox.add_child(icon);
@@ -128,10 +132,115 @@ const MemoryWarningDialog = GObject.registerClass(
 );
 
 /* ──────────────────────────────────────────────────────────────
+ * MemoryGuardIndicator
+ * ──────────────────────────────────────────────────────────────
+ * A panel button that displays combined memory usage on the top
+ * bar and provides a dropdown menu with detailed stats and a
+ * quick-access "Preferences" entry.
+ *
+ * Color states:
+ *  - default: combined < 70%
+ *  - warning (yellow): combined >= 70%
+ *  - critical (red): combined >= threshold
+ * ────────────────────────────────────────────────────────────── */
+const MemoryGuardIndicator = GObject.registerClass(
+  class MemoryGuardIndicator extends PanelMenu.Button {
+    /**
+     * @param {Extension} extensionObject - the parent Extension instance,
+     *   used to call openPreferences().
+     */
+    _init(extensionObject) {
+      super._init(0.0, "Memory Guard");
+      this._extensionObject = extensionObject;
+
+      // --- Panel button layout: icon + label ---
+      const box = new St.BoxLayout({
+        style_class: "panel-status-indicators-box",
+      });
+
+      this._icon = new St.Icon({
+        icon_name: "dialog-warning-symbolic",
+        icon_size: 16,
+        style_class: "system-status-icon memory-guard-indicator-icon",
+      });
+
+      this._label = new St.Label({
+        text: "—%",
+        y_align: Clutter.ActorAlign.CENTER,
+        style_class: "memory-guard-indicator-label",
+      });
+
+      box.add_child(this._icon);
+      box.add_child(this._label);
+      this.add_child(box);
+
+      // --- Dropdown menu: read-only stats ---
+      this._ramItem = new PopupMenu.PopupMenuItem("RAM: —%", {
+        reactive: false,
+      });
+      this._swapItem = new PopupMenu.PopupMenuItem("Swap: —%", {
+        reactive: false,
+      });
+      this._combinedItem = new PopupMenu.PopupMenuItem("Combined: —%", {
+        reactive: false,
+      });
+
+      this.menu.addMenuItem(this._ramItem);
+      this.menu.addMenuItem(this._swapItem);
+      this.menu.addMenuItem(this._combinedItem);
+
+      // --- Separator ---
+      this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+
+      // --- Preferences button ---
+      const prefsItem = new PopupMenu.PopupMenuItem("⚙ Preferences");
+      prefsItem.connect("activate", () => {
+        this._extensionObject.openPreferences();
+      });
+      this.menu.addMenuItem(prefsItem);
+    }
+
+    /**
+     * updateDisplay — refreshes the panel label, menu items, and
+     * icon/label color based on current memory usage.
+     *
+     * @param {number} ramPercent
+     * @param {number} swapPercent
+     * @param {number} combinedPercent
+     * @param {number} threshold - the configured memory-threshold
+     */
+    updateDisplay(ramPercent, swapPercent, combinedPercent, threshold) {
+      // Update panel label
+      this._label.text = `${Math.round(combinedPercent)}%`;
+
+      // Update menu items
+      this._ramItem.label.text = `RAM:      ${ramPercent.toFixed(1)}%`;
+      this._swapItem.label.text = `Swap:     ${swapPercent.toFixed(1)}%`;
+      this._combinedItem.label.text = `Combined: ${combinedPercent.toFixed(1)}%`;
+
+      // --- Color coding ---
+      // Remove previous state classes
+      this._icon.remove_style_class_name("memory-guard-warning");
+      this._icon.remove_style_class_name("memory-guard-critical");
+      this._label.remove_style_class_name("memory-guard-warning");
+      this._label.remove_style_class_name("memory-guard-critical");
+
+      if (combinedPercent >= threshold) {
+        this._icon.add_style_class_name("memory-guard-critical");
+        this._label.add_style_class_name("memory-guard-critical");
+      } else if (combinedPercent >= 70) {
+        this._icon.add_style_class_name("memory-guard-warning");
+        this._label.add_style_class_name("memory-guard-warning");
+      }
+    }
+  },
+);
+
+/* ──────────────────────────────────────────────────────────────
  * MemoryGuardExtension
  * ──────────────────────────────────────────────────────────────
  * Main extension class.  Lifecycle:
- *  enable()  → starts the polling loop
+ *  enable()  → starts the polling loop + panel indicator
  *  disable() → stops the loop + cleans up all resources
  * ────────────────────────────────────────────────────────────── */
 export default class MemoryGuardExtension extends Extension {
@@ -149,6 +258,24 @@ export default class MemoryGuardExtension extends Extension {
     this._cooldownSourceId = 0; // GLib source id for cool-down timer
     this._loopSourceId = 0; // GLib source id for the main poll loop
 
+    // Panel indicator (created only if the setting is on)
+    this._indicator = null;
+    if (this._settings.get_boolean("show-indicator")) {
+      this._createIndicator();
+    }
+
+    // React to runtime changes of the show-indicator setting
+    this._showIndicatorChangedId = this._settings.connect(
+      "changed::show-indicator",
+      () => {
+        if (this._settings.get_boolean("show-indicator")) {
+          this._createIndicator();
+        } else {
+          this._destroyIndicator();
+        }
+      },
+    );
+
     // Start the periodic memory check
     this._startLoop();
   }
@@ -163,6 +290,15 @@ export default class MemoryGuardExtension extends Extension {
   disable() {
     this._stopLoop();
     this._clearCooldown();
+
+    // Disconnect settings signal
+    if (this._showIndicatorChangedId) {
+      this._settings.disconnect(this._showIndicatorChangedId);
+      this._showIndicatorChangedId = 0;
+    }
+
+    // Remove panel indicator
+    this._destroyIndicator();
 
     // If a dialog is still open, close it gracefully
     if (this._dialog) {
@@ -207,6 +343,31 @@ export default class MemoryGuardExtension extends Extension {
     if (this._loopSourceId) {
       GLib.source_remove(this._loopSourceId);
       this._loopSourceId = 0;
+    }
+  }
+
+  /* =========================================================
+   * PANEL INDICATOR
+   * ========================================================= */
+
+  /**
+   * _createIndicator — adds the MemoryGuardIndicator to the
+   * right side of the GNOME Shell top panel.
+   */
+  _createIndicator() {
+    if (this._indicator) return;
+    this._indicator = new MemoryGuardIndicator(this);
+    Main.panel.addToStatusArea("memory-guard", this._indicator);
+  }
+
+  /**
+   * _destroyIndicator — removes and destroys the panel indicator.
+   * Safe to call even if the indicator was never created.
+   */
+  _destroyIndicator() {
+    if (this._indicator) {
+      this._indicator.destroy();
+      this._indicator = null;
     }
   }
 
@@ -272,15 +433,20 @@ export default class MemoryGuardExtension extends Extension {
 
       // Parse only the fields we need into a map
       const data = {};
-      const needed = ["MemTotal", "MemAvailable", "SwapTotal", "SwapFree"];
+      const needed = new Set([
+        "MemTotal",
+        "MemAvailable",
+        "SwapTotal",
+        "SwapFree",
+      ]);
 
       for (const line of text.split("\n")) {
-        const match = line.match(/^(\w+):\s+(\d+)/);
-        if (match && needed.includes(match[1])) {
-          data[match[1]] = parseInt(match[2], 10);
+        const match = /^(\w+):\s+(\d+)/.exec(line);
+        if (match && needed.has(match[1])) {
+          data[match[1]] = Number.parseInt(match[2], 10);
         }
         // Early exit once we have everything
-        if (Object.keys(data).length === needed.length) break;
+        if (Object.keys(data).length === needed.size) break;
       }
 
       return {
@@ -309,9 +475,6 @@ export default class MemoryGuardExtension extends Extension {
    *    expired → show the modal warning.
    */
   _checkMemory() {
-    // Guard: don't check if dialog is already showing or cool-down active
-    if (this._dialogOpen || this._coolingDown) return;
-
     const info = this._readMeminfo();
     if (!info) return;
 
@@ -334,6 +497,19 @@ export default class MemoryGuardExtension extends Extension {
 
     // --- Compare against threshold ---
     const memoryThreshold = this._settings.get_int("memory-threshold");
+
+    // Always update the panel indicator (even during cool-down
+    // or while the dialog is open) so the user sees live stats.
+    this._indicator?.updateDisplay(
+      ramPercent,
+      swapPercent,
+      combinedPercent,
+      memoryThreshold,
+    );
+
+    // Guard: don't show a new dialog if one is already visible
+    // or if the cool-down window hasn't expired yet.
+    if (this._dialogOpen || this._coolingDown) return;
 
     if (combinedPercent >= memoryThreshold) {
       this._showWarningDialog(
@@ -360,7 +536,12 @@ export default class MemoryGuardExtension extends Extension {
    * @param {number} combinedPercent - current combined (RAM+Swap) usage %
    * @param {number} memoryThreshold - configured memory threshold
    */
-  _showWarningDialog(ramPercent, swapPercent, combinedPercent, memoryThreshold) {
+  _showWarningDialog(
+    ramPercent,
+    swapPercent,
+    combinedPercent,
+    memoryThreshold,
+  ) {
     this._dialogOpen = true;
 
     this._dialog = new MemoryWarningDialog({
