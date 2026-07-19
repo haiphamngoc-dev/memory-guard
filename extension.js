@@ -19,6 +19,7 @@
 
 import GLib from "gi://GLib";
 import GObject from "gi://GObject";
+import Gio from "gi://Gio";
 import St from "gi://St";
 import Clutter from "gi://Clutter";
 
@@ -29,6 +30,13 @@ import * as PopupMenu from "resource:///org/gnome/shell/ui/popupMenu.js";
 import * as Main from "resource:///org/gnome/shell/ui/main.js";
 
 import { Extension } from "resource:///org/gnome/shell/extensions/extension.js";
+
+// Promisify Gio.File.prototype.load_contents_async for async/await file read
+Gio._promisify(
+  Gio.File.prototype,
+  "load_contents_async",
+  "load_contents_finish",
+);
 
 /* ──────────────────────────────────────────────────────────────
  * MemoryWarningDialog
@@ -255,6 +263,7 @@ export default class MemoryGuardExtension extends Extension {
     // State flags for dialog management
     this._dialogOpen = false; // true while the modal is on-screen
     this._coolingDown = false; // true during the post-dismiss cool-down
+    this._checking = false; // true while a check is currently executing
     this._cooldownSourceId = 0; // GLib source id for cool-down timer
     this._loopSourceId = 0; // GLib source id for the main poll loop
 
@@ -419,15 +428,16 @@ export default class MemoryGuardExtension extends Extension {
    *   SwapTotal:       8192000 kB
    *   SwapFree:        1024000 kB
    *
-   * @returns {{ memTotal: number, memAvailable: number,
-   *             swapTotal: number, swapFree: number } | null}
+   * @returns {Promise<{ memTotal: number, memAvailable: number,
+   *             swapTotal: number, swapFree: number } | null>}
    */
-  _readMeminfo() {
+  async _readMeminfo() {
     try {
-      const [ok, contents] = GLib.file_get_contents("/proc/meminfo");
-      if (!ok) return null;
+      const file = Gio.File.new_for_path("/proc/meminfo");
+      const [contents] = await file.load_contents_async(null);
+      if (!contents) return null;
 
-      // GLib.file_get_contents returns a Uint8Array in GJS;
+      // Gio.File.load_contents_async returns a Uint8Array in GJS;
       // decode it to a UTF-8 string.
       const text = new TextDecoder().decode(contents);
 
@@ -468,56 +478,64 @@ export default class MemoryGuardExtension extends Extension {
   /**
    * _checkMemory — core logic.
    *
-   * 1. Reads /proc/meminfo.
+   * 1. Reads /proc/meminfo asynchronously.
    * 2. Computes RAM used% and Swap used%.
    * 3. Compares combined usage against threshold from GSettings.
    * 4. If exceeded AND no dialog is open AND cool-down has
    *    expired → show the modal warning.
    */
-  _checkMemory() {
-    const info = this._readMeminfo();
-    if (!info) return;
+  async _checkMemory() {
+    // Prevent concurrent checks
+    if (this._checking) return;
+    this._checking = true;
 
-    // --- Calculate usage percentages ---
-    // RAM used = Total − Available (MemAvailable accounts for
-    // buffers/cache, giving a realistic "used" figure).
-    const ramUsed = info.memTotal - info.memAvailable;
-    const ramPercent = info.memTotal > 0 ? (ramUsed / info.memTotal) * 100 : 0;
+    try {
+      const info = await this._readMeminfo();
+      if (!info) return;
 
-    // Swap used = Total − Free
-    const swapUsed = info.swapTotal - info.swapFree;
-    const swapPercent =
-      info.swapTotal > 0 ? (swapUsed / info.swapTotal) * 100 : 0;
+      // --- Calculate usage percentages ---
+      // RAM used = Total − Available (MemAvailable accounts for
+      // buffers/cache, giving a realistic "used" figure).
+      const ramUsed = info.memTotal - info.memAvailable;
+      const ramPercent = info.memTotal > 0 ? (ramUsed / info.memTotal) * 100 : 0;
 
-    // --- Combined (RAM + Swap) usage ---
-    const totalMemory = info.memTotal + info.swapTotal;
-    const totalUsed = ramUsed + swapUsed;
-    const combinedPercent =
-      totalMemory > 0 ? (totalUsed / totalMemory) * 100 : 0;
+      // Swap used = Total − Free
+      const swapUsed = info.swapTotal - info.swapFree;
+      const swapPercent =
+        info.swapTotal > 0 ? (swapUsed / info.swapTotal) * 100 : 0;
 
-    // --- Compare against threshold ---
-    const memoryThreshold = this._settings.get_int("memory-threshold");
+      // --- Combined (RAM + Swap) usage ---
+      const totalMemory = info.memTotal + info.swapTotal;
+      const totalUsed = ramUsed + swapUsed;
+      const combinedPercent =
+        totalMemory > 0 ? (totalUsed / totalMemory) * 100 : 0;
 
-    // Always update the panel indicator (even during cool-down
-    // or while the dialog is open) so the user sees live stats.
-    this._indicator?.updateDisplay(
-      ramPercent,
-      swapPercent,
-      combinedPercent,
-      memoryThreshold,
-    );
+      // --- Compare against threshold ---
+      const memoryThreshold = this._settings.get_int("memory-threshold");
 
-    // Guard: don't show a new dialog if one is already visible
-    // or if the cool-down window hasn't expired yet.
-    if (this._dialogOpen || this._coolingDown) return;
-
-    if (combinedPercent >= memoryThreshold) {
-      this._showWarningDialog(
+      // Always update the panel indicator (even during cool-down
+      // or while the dialog is open) so the user sees live stats.
+      this._indicator?.updateDisplay(
         ramPercent,
         swapPercent,
         combinedPercent,
         memoryThreshold,
       );
+
+      // Guard: don't show a new dialog if one is already visible
+      // or if the cool-down window hasn't expired yet.
+      if (this._dialogOpen || this._coolingDown) return;
+
+      if (combinedPercent >= memoryThreshold) {
+        this._showWarningDialog(
+          ramPercent,
+          swapPercent,
+          combinedPercent,
+          memoryThreshold,
+        );
+      }
+    } finally {
+      this._checking = false;
     }
   }
 
