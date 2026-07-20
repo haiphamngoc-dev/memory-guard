@@ -109,9 +109,11 @@ Commit both the `.gschema.xml` and the compiled `gschemas.compiled` files to the
 ### Reloading Extensions for Debugging
 
 #### Option A: Wayland Session (Standard)
+
 GNOME Shell on Wayland does not support dynamic extension reloads. You must log out of your session and log back in to reload modifications in `extension.js`.
 
 #### Option B: Nested GNOME Shell (Recommended)
+
 You can launch a nested GNOME Shell session in a window to test changes dynamically without logging out:
 
 ```bash
@@ -119,7 +121,9 @@ dbus-run-session -- gnome-shell --nested --wayland
 ```
 
 #### Option C: Looking Glass
+
 Press `Alt+F2`, type `lg`, and hit Enter. You can view errors, look at logs, or dynamically reload styling contexts using:
+
 ```javascript
 St.ThemeContext.get_for_stage(global.stage).get_theme().load_stylesheet(Gio.File.new_for_path('/path/to/stylesheet.css'));
 ```
@@ -143,6 +147,7 @@ journalctl -f -o cat /usr/bin/gnome-shell | grep -i "ResourceGuard"
 ## Resource Management Checklist
 
 To prevent shell crashes and memory leaks:
+
 1. Ensure all signals connected to settings or global shell modules are disconnected in `disable()`.
 2. Clear and remove all GLib timeouts/intervals using `GLib.source_remove(sourceId)` and reset their IDs to `0` in `disable()`.
 3. Nullify large data references (`this._settings = null`, `this._lastCpuSample = null`).

@@ -147,7 +147,7 @@ const ResourceGuardIndicator = GObject.registerClass(
         style_class: "resource-guard-cpu-box",
       });
       this._cpuIcon = new St.Icon({
-        icon_name: "system-run-symbolic",
+        gicon: Gio.icon_new_for_string(`${this._extensionObject.path}/icons/cpu-symbolic.svg`),
         icon_size: 16,
         style_class: "system-status-icon resource-guard-indicator-icon",
       });
@@ -165,7 +165,7 @@ const ResourceGuardIndicator = GObject.registerClass(
         style_class: "resource-guard-mem-box",
       });
       this._memIcon = new St.Icon({
-        icon_name: "dialog-warning-symbolic",
+        gicon: Gio.icon_new_for_string(`${this._extensionObject.path}/icons/ram-symbolic.svg`),
         icon_size: 16,
         style_class: "system-status-icon resource-guard-indicator-icon",
       });
