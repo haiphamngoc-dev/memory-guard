@@ -16,7 +16,7 @@ import Gio from "gi://Gio";
 
 import { ExtensionPreferences } from "resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js";
 
-export default class MemoryGuardPreferences extends ExtensionPreferences {
+export default class ResourceGuardPreferences extends ExtensionPreferences {
   /**
    * fillPreferencesWindow — called by GNOME to populate the
    * preferences window with our settings UI.
@@ -32,32 +32,45 @@ export default class MemoryGuardPreferences extends ExtensionPreferences {
 
     // --- Page ---
     const page = new Adw.PreferencesPage({
-      title: "Memory Guard",
+      title: "Resource Guard",
       icon_name: "dialog-warning-symbolic",
     });
     window.add(page);
 
     // =====================================================
-    // GROUP 0 — Panel Indicator
+    // GROUP 0 — Panel Indicators
     // =====================================================
     const indicatorGroup = new Adw.PreferencesGroup({
-      title: "Panel Indicator",
-      description: "Control the indicator shown in the top panel.",
+      title: "Panel Indicators",
+      description: "Control the indicators shown in the top panel.",
     });
     page.add(indicatorGroup);
 
-    // --- Show Indicator toggle ---
-    const indicatorRow = new Adw.SwitchRow({
-      title: "Show Indicator",
-      subtitle: "Display memory usage in the top panel",
+    // --- Show CPU toggle ---
+    const cpuRow = new Adw.SwitchRow({
+      title: "Show CPU Indicator",
+      subtitle: "Display CPU usage in the top panel",
     });
     settings.bind(
-      "show-indicator",
-      indicatorRow,
+      "show-cpu",
+      cpuRow,
       "active",
       Gio.SettingsBindFlags.DEFAULT,
     );
-    indicatorGroup.add(indicatorRow);
+    indicatorGroup.add(cpuRow);
+
+    // --- Show Memory toggle ---
+    const memoryRow = new Adw.SwitchRow({
+      title: "Show Memory Indicator",
+      subtitle: "Display memory usage in the top panel",
+    });
+    settings.bind(
+      "show-memory",
+      memoryRow,
+      "active",
+      Gio.SettingsBindFlags.DEFAULT,
+    );
+    indicatorGroup.add(memoryRow);
 
     // =====================================================
     // GROUP 1 — Threshold Settings
@@ -69,7 +82,7 @@ export default class MemoryGuardPreferences extends ExtensionPreferences {
     page.add(thresholdGroup);
 
     // --- Memory Threshold (SpinRow) ---
-    const memoryRow = new Adw.SpinRow({
+    const memoryThresholdRow = new Adw.SpinRow({
       title: "Memory Threshold",
       subtitle: "Show warning when combined (RAM + Swap) usage exceeds this %",
       adjustment: new Gtk.Adjustment({
@@ -82,11 +95,11 @@ export default class MemoryGuardPreferences extends ExtensionPreferences {
     });
     settings.bind(
       "memory-threshold",
-      memoryRow,
+      memoryThresholdRow,
       "value",
       Gio.SettingsBindFlags.DEFAULT,
     );
-    thresholdGroup.add(memoryRow);
+    thresholdGroup.add(memoryThresholdRow);
 
     // =====================================================
     // GROUP 2 — Timing Settings

@@ -1,20 +1,15 @@
 /* ============================================================
- * System Memory Guard — extension.js
+ * Resource Guard — extension.js
  * ============================================================
- * GNOME 45+ ESM extension that periodically reads /proc/meminfo,
- * calculates combined (RAM + Swap) usage, and pops a blocking
- * ModalDialog when the combined usage exceeds the configured threshold.
+ * GNOME 45+ ESM extension that periodically reads /proc/meminfo
+ * and /proc/stat, calculates CPU and Memory usage, and pops a blocking
+ * ModalDialog when the combined memory usage exceeds the configured threshold.
  *
  * Key design points:
- *  • Uses GLib.file_get_contents to read /proc/meminfo (no
- *    external library needed).
- *  • Polling is driven by GLib.timeout_add_seconds and is
- *    deterministically removed on disable() to avoid leaks.
- *  • The ModalDialog grabs keyboard & pointer focus; the user
- *    MUST click "OK" to dismiss it.
- *  • A cool-down timer prevents dialog spam: once dismissed,
- *    no new dialog can appear for `cooldown-time` seconds even
- *    if memory is still above threshold.
+ *  • Calculates CPU usage percentages dynamically via tick delta.
+ *  • Displays CPU and Memory indicators side-by-side on the panel.
+ *  • The warning dialog is triggered exclusively by Memory thresholds.
+ *  • Clean resource disposal on disable().
  * ============================================================ */
 
 import GLib from "gi://GLib";
@@ -23,7 +18,7 @@ import Gio from "gi://Gio";
 import St from "gi://St";
 import Clutter from "gi://Clutter";
 
-// GNOME Shell internal modules (available only inside the shell process)
+// GNOME Shell internal modules
 import * as ModalDialog from "resource:///org/gnome/shell/ui/modalDialog.js";
 import * as PanelMenu from "resource:///org/gnome/shell/ui/panelMenu.js";
 import * as PopupMenu from "resource:///org/gnome/shell/ui/popupMenu.js";
@@ -31,7 +26,7 @@ import * as Main from "resource:///org/gnome/shell/ui/main.js";
 
 import { Extension } from "resource:///org/gnome/shell/extensions/extension.js";
 
-// Promisify Gio.File.prototype.load_contents_async for async/await file read
+// Promisify Gio.File.prototype.load_contents_async for async file reads
 Gio._promisify(
   Gio.File.prototype,
   "load_contents_async",
@@ -39,18 +34,12 @@ Gio._promisify(
 );
 
 /* ──────────────────────────────────────────────────────────────
- * MemoryWarningDialog
+ * ResourceWarningDialog
  * ──────────────────────────────────────────────────────────────
- * A modal dialog that shows RAM/Swap usage and forces the user
- * to acknowledge it before returning to the desktop.
- *
- * Inherits ModalDialog.ModalDialog which handles:
- *  - pushModal / popModal (focus grab)
- *  - fade-in / fade-out animations
- *  - light-box overlay behind the dialog
+ * A modal warning dialog that presents RAM/Swap usage details.
  * ────────────────────────────────────────────────────────────── */
-const MemoryWarningDialog = GObject.registerClass(
-  class MemoryWarningDialog extends ModalDialog.ModalDialog {
+const ResourceWarningDialog = GObject.registerClass(
+  class ResourceWarningDialog extends ModalDialog.ModalDialog {
     /**
      * @param {object}   params
      * @param {number}   params.ramPercent      - Current RAM usage (0-100)
@@ -68,59 +57,58 @@ const MemoryWarningDialog = GObject.registerClass(
       onClose,
     }) {
       super({
-        styleClass: "memory-guard-dialog",
+        styleClass: "resource-guard-dialog",
         destroyOnClose: true,
       });
 
       this._onClose = onClose;
 
-      // --- Build the content layout (vertical box) ---
+      // Build content layout (vertical box)
       const contentBox = new St.BoxLayout({
         vertical: true,
         x_align: Clutter.ActorAlign.CENTER,
         y_align: Clutter.ActorAlign.CENTER,
-        style_class: "memory-guard-content",
+        style_class: "resource-guard-content",
       });
 
       // Warning icon
       const icon = new St.Icon({
         icon_name: "dialog-warning-symbolic",
         icon_size: 64,
-        style_class: "memory-guard-icon",
+        style_class: "resource-guard-icon",
       });
       contentBox.add_child(icon);
 
       // Title
       const title = new St.Label({
         text: "⚠ System Memory Warning",
-        style_class: "memory-guard-title",
+        style_class: "resource-guard-title",
       });
       contentBox.add_child(title);
 
-      // Build a human-readable detail message
+      const body = new St.Label({
+        text:
+          "Memory consumption has exceeded the configured threshold.\n" +
+          "Consider closing unused applications to free resources.",
+        style_class: "resource-guard-body",
+      });
+      contentBox.add_child(body);
+
       const lines = [
         `RAM usage:      ${ramPercent.toFixed(1)}%`,
         `Swap usage:     ${swapPercent.toFixed(1)}%`,
         `Combined usage: ${combinedPercent.toFixed(1)}%  (threshold: ${memoryThreshold}%)`,
       ];
 
-      const body = new St.Label({
-        text:
-          "Memory consumption has exceeded the configured threshold.\n" +
-          "Consider closing unused applications to free resources.",
-        style_class: "memory-guard-body",
-      });
-      contentBox.add_child(body);
-
       const percentLabel = new St.Label({
         text: lines.join("\n"),
-        style_class: "memory-guard-percent",
+        style_class: "resource-guard-percent",
       });
       contentBox.add_child(percentLabel);
 
       this.contentLayout.add_child(contentBox);
 
-      // --- "OK" button — the ONLY way to dismiss ---
+      // OK button to dismiss
       this.addButton({
         label: "OK",
         action: () => this._dismiss(),
@@ -128,61 +116,78 @@ const MemoryWarningDialog = GObject.registerClass(
       });
     }
 
-    /**
-     * _dismiss — close the dialog and notify the extension so it can
-     * start the cool-down timer.
-     */
     _dismiss() {
-      this.close(); // popModal + fade-out
-      this._onClose?.(); // trigger cool-down in the extension
+      this.close();
+      this._onClose?.();
     }
   },
 );
 
 /* ──────────────────────────────────────────────────────────────
- * MemoryGuardIndicator
+ * ResourceGuardIndicator
  * ──────────────────────────────────────────────────────────────
- * A panel button that displays combined memory usage on the top
- * bar and provides a dropdown menu with detailed stats and a
- * quick-access "Preferences" entry.
- *
- * Color states:
- *  - default: combined < 70%
- *  - warning (yellow): combined >= 70%
- *  - critical (red): combined >= threshold
+ * A panel button displaying CPU and Memory indicators side-by-side.
  * ────────────────────────────────────────────────────────────── */
-const MemoryGuardIndicator = GObject.registerClass(
-  class MemoryGuardIndicator extends PanelMenu.Button {
+const ResourceGuardIndicator = GObject.registerClass(
+  class ResourceGuardIndicator extends PanelMenu.Button {
     /**
-     * @param {Extension} extensionObject - the parent Extension instance,
-     *   used to call openPreferences().
+     * @param {Extension} extensionObject - Parent extension instance
      */
     _init(extensionObject) {
-      super._init(0.0, "Memory Guard");
+      super._init(0.0, "Resource Guard");
       this._extensionObject = extensionObject;
 
-      // --- Panel button layout: icon + label ---
+      // Outer layout container
       const box = new St.BoxLayout({
         style_class: "panel-status-indicators-box",
       });
 
-      this._icon = new St.Icon({
-        icon_name: "dialog-warning-symbolic",
-        icon_size: 16,
-        style_class: "system-status-icon memory-guard-indicator-icon",
+      // --- CPU Sub-box ---
+      this._cpuBox = new St.BoxLayout({
+        style_class: "resource-guard-cpu-box",
       });
-
-      this._label = new St.Label({
+      this._cpuIcon = new St.Icon({
+        icon_name: "system-run-symbolic",
+        icon_size: 16,
+        style_class: "system-status-icon resource-guard-indicator-icon",
+      });
+      this._cpuLabel = new St.Label({
         text: "—%",
         y_align: Clutter.ActorAlign.CENTER,
-        style_class: "memory-guard-indicator-label",
+        style_class: "resource-guard-indicator-label",
       });
+      this._cpuBox.add_child(this._cpuIcon);
+      this._cpuBox.add_child(this._cpuLabel);
+      box.add_child(this._cpuBox);
 
-      box.add_child(this._icon);
-      box.add_child(this._label);
+      // --- Memory Sub-box ---
+      this._memBox = new St.BoxLayout({
+        style_class: "resource-guard-mem-box",
+      });
+      this._memIcon = new St.Icon({
+        icon_name: "dialog-warning-symbolic",
+        icon_size: 16,
+        style_class: "system-status-icon resource-guard-indicator-icon",
+      });
+      this._memLabel = new St.Label({
+        text: "—%",
+        y_align: Clutter.ActorAlign.CENTER,
+        style_class: "resource-guard-indicator-label",
+      });
+      this._memBox.add_child(this._memIcon);
+      this._memBox.add_child(this._memLabel);
+      box.add_child(this._memBox);
+
       this.add_child(box);
 
-      // --- Dropdown menu: read-only stats ---
+      // --- Dropdown Menu Items ---
+      this._cpuItem = new PopupMenu.PopupMenuItem("CPU: —%", {
+        reactive: false,
+      });
+      this.menu.addMenuItem(this._cpuItem);
+
+      this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+
       this._ramItem = new PopupMenu.PopupMenuItem("RAM: —%", {
         reactive: false,
       });
@@ -197,157 +202,171 @@ const MemoryGuardIndicator = GObject.registerClass(
       this.menu.addMenuItem(this._swapItem);
       this.menu.addMenuItem(this._combinedItem);
 
-      // --- Separator ---
+      // Separator
       this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
-      // --- Preferences button ---
+      // Preferences button
       const prefsItem = new PopupMenu.PopupMenuItem("⚙ Preferences");
       prefsItem.connect("activate", () => {
         this._extensionObject.openPreferences();
       });
       this.menu.addMenuItem(prefsItem);
+
+      // Apply initial GSettings visibility
+      this.updateVisibility();
     }
 
     /**
-     * updateDisplay — refreshes the panel label, menu items, and
-     * icon/label color based on current memory usage.
-     *
-     * @param {number} ramPercent
-     * @param {number} swapPercent
-     * @param {number} combinedPercent
-     * @param {number} threshold - the configured memory-threshold
+     * updateVisibility — shows/hides CPU/Memory indicators dynamically based on GSettings.
      */
-    updateDisplay(ramPercent, swapPercent, combinedPercent, threshold) {
-      // Update panel label
-      this._label.text = `${Math.round(combinedPercent)}%`;
+    updateVisibility() {
+      const showCpu = this._extensionObject._settings.get_boolean("show-cpu");
+      const showMem = this._extensionObject._settings.get_boolean("show-memory");
 
-      // Update menu items
+      this._cpuBox.visible = showCpu;
+      this._memBox.visible = showMem;
+      this.visible = showCpu || showMem;
+    }
+
+    /**
+     * updateDisplay — refreshes UI content and colors based on usage statistics.
+     */
+    updateDisplay(cpuPercent, ramPercent, swapPercent, combinedPercent, threshold) {
+      // 1. Update CPU Indicator
+      this._cpuLabel.text = `${Math.round(cpuPercent)}%`;
+      this._cpuItem.label.text = `CPU:      ${cpuPercent.toFixed(1)}%`;
+
+      this._cpuIcon.remove_style_class_name("resource-guard-warning");
+      this._cpuIcon.remove_style_class_name("resource-guard-critical");
+      this._cpuLabel.remove_style_class_name("resource-guard-warning");
+      this._cpuLabel.remove_style_class_name("resource-guard-critical");
+
+      const CRITICAL_LOAD_THRESHOLD = 90;
+      const WARNING_LOAD_THRESHOLD = 70;
+
+      if (cpuPercent >= CRITICAL_LOAD_THRESHOLD) {
+        this._cpuIcon.add_style_class_name("resource-guard-critical");
+        this._cpuLabel.add_style_class_name("resource-guard-critical");
+      } else if (cpuPercent >= WARNING_LOAD_THRESHOLD) {
+        this._cpuIcon.add_style_class_name("resource-guard-warning");
+        this._cpuLabel.add_style_class_name("resource-guard-warning");
+      }
+
+      // 2. Update Memory Indicator
+      this._memLabel.text = `${Math.round(combinedPercent)}%`;
       this._ramItem.label.text = `RAM:      ${ramPercent.toFixed(1)}%`;
       this._swapItem.label.text = `Swap:     ${swapPercent.toFixed(1)}%`;
       this._combinedItem.label.text = `Combined: ${combinedPercent.toFixed(1)}%`;
 
-      // --- Color coding ---
-      // Remove previous state classes
-      this._icon.remove_style_class_name("memory-guard-warning");
-      this._icon.remove_style_class_name("memory-guard-critical");
-      this._label.remove_style_class_name("memory-guard-warning");
-      this._label.remove_style_class_name("memory-guard-critical");
+      this._memIcon.remove_style_class_name("resource-guard-warning");
+      this._memIcon.remove_style_class_name("resource-guard-critical");
+      this._memLabel.remove_style_class_name("resource-guard-warning");
+      this._memLabel.remove_style_class_name("resource-guard-critical");
 
       if (combinedPercent >= threshold) {
-        this._icon.add_style_class_name("memory-guard-critical");
-        this._label.add_style_class_name("memory-guard-critical");
-      } else if (combinedPercent >= 70) {
-        this._icon.add_style_class_name("memory-guard-warning");
-        this._label.add_style_class_name("memory-guard-warning");
+        this._memIcon.add_style_class_name("resource-guard-critical");
+        this._memLabel.add_style_class_name("resource-guard-critical");
+      } else if (combinedPercent >= WARNING_LOAD_THRESHOLD) {
+        this._memIcon.add_style_class_name("resource-guard-warning");
+        this._memLabel.add_style_class_name("resource-guard-warning");
       }
     }
   },
 );
 
 /* ──────────────────────────────────────────────────────────────
- * MemoryGuardExtension
+ * ResourceGuardExtension
  * ──────────────────────────────────────────────────────────────
- * Main extension class.  Lifecycle:
- *  enable()  → starts the polling loop + panel indicator
- *  disable() → stops the loop + cleans up all resources
+ * Main extension controller.
  * ────────────────────────────────────────────────────────────── */
-export default class MemoryGuardExtension extends Extension {
-  /* ---------------------------------------------------------
-   * enable() — called by GNOME Shell when the extension is
-   * turned on (or at login if it was previously enabled).
-   * --------------------------------------------------------- */
+export default class ResourceGuardExtension extends Extension {
   enable() {
-    // Load user preferences (GSettings)
     this._settings = this.getSettings();
 
-    // State flags for dialog management
-    this._dialogOpen = false; // true while the modal is on-screen
-    this._coolingDown = false; // true during the post-dismiss cool-down
-    this._checking = false; // true while a check is currently executing
-    this._cooldownSourceId = 0; // GLib source id for cool-down timer
-    this._loopSourceId = 0; // GLib source id for the main poll loop
+    // Track execution states & source IDs
+    this._dialogOpen = false;
+    this._coolingDown = false;
+    this._checking = false;
+    this._cooldownSourceId = 0;
+    this._loopSourceId = 0;
 
-    // Panel indicator (created only if the setting is on)
+    // CPU tick history
+    this._lastCpuSample = null;
+
+    // Create panel indicator if at least one display setting is active
     this._indicator = null;
-    if (this._settings.get_boolean("show-indicator")) {
+    if (this._settings.get_boolean("show-cpu") || this._settings.get_boolean("show-memory")) {
       this._createIndicator();
     }
 
-    // React to runtime changes of the show-indicator setting
-    this._showIndicatorChangedId = this._settings.connect(
-      "changed::show-indicator",
-      () => {
-        if (this._settings.get_boolean("show-indicator")) {
-          this._createIndicator();
-        } else {
-          this._destroyIndicator();
-        }
-      },
+    // Connect visibility changes
+    this._showCpuChangedId = this._settings.connect(
+      "changed::show-cpu",
+      () => this._onSettingsChanged()
+    );
+    this._showMemoryChangedId = this._settings.connect(
+      "changed::show-memory",
+      () => this._onSettingsChanged()
     );
 
-    // Start the periodic memory check
+    // Start checking loop
     this._startLoop();
   }
 
-  /* ---------------------------------------------------------
-   * disable() — called when the extension is turned off, when
-   * the screen locks (GNOME 42+), or when the shell restarts.
-   *
-   * We MUST remove every GLib source and drop every reference
-   * to avoid memory leaks or orphaned timers.
-   * --------------------------------------------------------- */
   disable() {
     this._stopLoop();
     this._clearCooldown();
 
-    // Disconnect settings signal
-    if (this._showIndicatorChangedId) {
-      this._settings.disconnect(this._showIndicatorChangedId);
-      this._showIndicatorChangedId = 0;
+    // Settings signals cleanup
+    if (this._showCpuChangedId) {
+      this._settings.disconnect(this._showCpuChangedId);
+      this._showCpuChangedId = 0;
+    }
+    if (this._showMemoryChangedId) {
+      this._settings.disconnect(this._showMemoryChangedId);
+      this._showMemoryChangedId = 0;
     }
 
-    // Remove panel indicator
     this._destroyIndicator();
 
-    // If a dialog is still open, close it gracefully
     if (this._dialog) {
       this._dialog.close();
       this._dialog = null;
     }
 
     this._settings = null;
+    this._lastCpuSample = null;
   }
 
-  /* =========================================================
-   * POLLING LOOP
-   * ========================================================= */
+  _onSettingsChanged() {
+    const showCpu = this._settings.get_boolean("show-cpu");
+    const showMem = this._settings.get_boolean("show-memory");
 
-  /**
-   * _startLoop — registers a repeating GLib timeout that fires
-   * every `check-interval` seconds.
-   */
+    if (showCpu || showMem) {
+      if (!this._indicator) {
+        this._createIndicator();
+      } else {
+        this._indicator.updateVisibility();
+      }
+    } else {
+      this._destroyIndicator();
+    }
+  }
+
   _startLoop() {
-    // Read interval from settings (default 3 s)
     const interval = this._settings.get_int("check-interval");
+    this._checkResources();
 
-    // Run one check immediately at startup
-    this._checkMemory();
-
-    // Then schedule subsequent checks
     this._loopSourceId = GLib.timeout_add_seconds(
       GLib.PRIORITY_DEFAULT,
       interval,
       () => {
-        this._checkMemory();
-        return GLib.SOURCE_CONTINUE; // keep the timer alive
+        this._checkResources();
+        return GLib.SOURCE_CONTINUE;
       },
     );
   }
 
-  /**
-   * _stopLoop — removes the polling timer.  Safe to call even
-   * if the timer was never started or was already removed.
-   */
   _stopLoop() {
     if (this._loopSourceId) {
       GLib.source_remove(this._loopSourceId);
@@ -355,24 +374,12 @@ export default class MemoryGuardExtension extends Extension {
     }
   }
 
-  /* =========================================================
-   * PANEL INDICATOR
-   * ========================================================= */
-
-  /**
-   * _createIndicator — adds the MemoryGuardIndicator to the
-   * right side of the GNOME Shell top panel.
-   */
   _createIndicator() {
     if (this._indicator) return;
-    this._indicator = new MemoryGuardIndicator(this);
-    Main.panel.addToStatusArea("memory-guard", this._indicator);
+    this._indicator = new ResourceGuardIndicator(this);
+    Main.panel.addToStatusArea("resource-guard", this._indicator);
   }
 
-  /**
-   * _destroyIndicator — removes and destroys the panel indicator.
-   * Safe to call even if the indicator was never created.
-   */
   _destroyIndicator() {
     if (this._indicator) {
       this._indicator.destroy();
@@ -380,14 +387,6 @@ export default class MemoryGuardExtension extends Extension {
     }
   }
 
-  /* =========================================================
-   * COOL-DOWN MANAGEMENT
-   * ========================================================= */
-
-  /**
-   * _startCooldown — prevents a new dialog from appearing for
-   * `cooldown-time` seconds after the user dismisses one.
-   */
   _startCooldown() {
     this._coolingDown = true;
     const cooldown = this._settings?.get_int("cooldown-time") ?? 60;
@@ -398,14 +397,11 @@ export default class MemoryGuardExtension extends Extension {
       () => {
         this._coolingDown = false;
         this._cooldownSourceId = 0;
-        return GLib.SOURCE_REMOVE; // one-shot
+        return GLib.SOURCE_REMOVE;
       },
     );
   }
 
-  /**
-   * _clearCooldown — cancels the cool-down timer (e.g. on disable).
-   */
   _clearCooldown() {
     if (this._cooldownSourceId) {
       GLib.source_remove(this._cooldownSourceId);
@@ -414,19 +410,44 @@ export default class MemoryGuardExtension extends Extension {
     this._coolingDown = false;
   }
 
-  /* =========================================================
-   * MEMORY READING
-   * ========================================================= */
+  /**
+   * _readCpuTicks — asynchronously reads /proc/stat and returns aggregated CPU ticks.
+   *
+   * @returns {Promise<{ idle: number, total: number } | null>}
+   */
+  async _readCpuTicks() {
+    try {
+      const file = Gio.File.new_for_path("/proc/stat");
+      const [contents] = await file.load_contents_async(null);
+      if (!contents) return null;
+
+      const text = new TextDecoder().decode(contents);
+      const lines = text.split("\n");
+      const entry = lines[0]?.trim().split(/\s+/) || [];
+      if (entry.length < 5 || entry[0] !== "cpu") {
+        return null;
+      }
+
+      // Aggregate Idle + IOWait ticks
+      const idle = Number.parseInt(entry[4], 10) + (Number.parseInt(entry[5], 10) || 0);
+
+      let total = 0;
+      for (let i = 1; i < entry.length; i++) {
+        const val = Number.parseInt(entry[i], 10);
+        if (!Number.isNaN(val)) {
+          total += val;
+        }
+      }
+
+      return { idle, total };
+    } catch (e) {
+      logError(e, "ResourceGuard: failed to read /proc/stat");
+      return null;
+    }
+  }
 
   /**
-   * _readMeminfo — reads /proc/meminfo and returns an object
-   * with numeric values (in kB) for the keys we care about.
-   *
-   * Relevant lines in /proc/meminfo:
-   *   MemTotal:       16384000 kB
-   *   MemAvailable:    4096000 kB
-   *   SwapTotal:       8192000 kB
-   *   SwapFree:        1024000 kB
+   * _readMeminfo — asynchronously reads /proc/meminfo and returns active metrics in kB.
    *
    * @returns {Promise<{ memTotal: number, memAvailable: number,
    *             swapTotal: number, swapFree: number } | null>}
@@ -437,11 +458,7 @@ export default class MemoryGuardExtension extends Extension {
       const [contents] = await file.load_contents_async(null);
       if (!contents) return null;
 
-      // Gio.File.load_contents_async returns a Uint8Array in GJS;
-      // decode it to a UTF-8 string.
       const text = new TextDecoder().decode(contents);
-
-      // Parse only the fields we need into a map
       const data = {};
       const needed = new Set([
         "MemTotal",
@@ -455,7 +472,6 @@ export default class MemoryGuardExtension extends Extension {
         if (match && needed.has(match[1])) {
           data[match[1]] = Number.parseInt(match[2], 10);
         }
-        // Early exit once we have everything
         if (Object.keys(data).length === needed.size) break;
       }
 
@@ -466,64 +482,62 @@ export default class MemoryGuardExtension extends Extension {
         swapFree: data.SwapFree ?? 0,
       };
     } catch (e) {
-      logError(e, "MemoryGuard: failed to read /proc/meminfo");
+      logError(e, "ResourceGuard: failed to read /proc/meminfo");
       return null;
     }
   }
 
-  /* =========================================================
-   * CHECK + TRIGGER
-   * ========================================================= */
-
   /**
-   * _checkMemory — core logic.
-   *
-   * 1. Reads /proc/meminfo asynchronously.
-   * 2. Computes RAM used% and Swap used%.
-   * 3. Compares combined usage against threshold from GSettings.
-   * 4. If exceeded AND no dialog is open AND cool-down has
-   *    expired → show the modal warning.
+   * _checkResources — samples stats, triggers displays and checks warnings.
    */
-  async _checkMemory() {
-    // Prevent concurrent checks
+  async _checkResources() {
     if (this._checking) return;
     this._checking = true;
 
     try {
-      const info = await this._readMeminfo();
+      const [info, cpuTicks] = await Promise.all([
+        this._readMeminfo(),
+        this._readCpuTicks(),
+      ]);
+
       if (!info) return;
 
-      // --- Calculate usage percentages ---
-      // RAM used = Total − Available (MemAvailable accounts for
-      // buffers/cache, giving a realistic "used" figure).
+      // 1. Calculate Memory Usages
       const ramUsed = info.memTotal - info.memAvailable;
       const ramPercent = info.memTotal > 0 ? (ramUsed / info.memTotal) * 100 : 0;
 
-      // Swap used = Total − Free
       const swapUsed = info.swapTotal - info.swapFree;
-      const swapPercent =
-        info.swapTotal > 0 ? (swapUsed / info.swapTotal) * 100 : 0;
+      const swapPercent = info.swapTotal > 0 ? (swapUsed / info.swapTotal) * 100 : 0;
 
-      // --- Combined (RAM + Swap) usage ---
       const totalMemory = info.memTotal + info.swapTotal;
       const totalUsed = ramUsed + swapUsed;
-      const combinedPercent =
-        totalMemory > 0 ? (totalUsed / totalMemory) * 100 : 0;
+      const combinedPercent = totalMemory > 0 ? (totalUsed / totalMemory) * 100 : 0;
 
-      // --- Compare against threshold ---
+      // 2. Calculate CPU Usages
+      let cpuPercent = 0;
+      if (cpuTicks) {
+        if (this._lastCpuSample) {
+          const deltaTotal = cpuTicks.total - this._lastCpuSample.total;
+          const deltaIdle = cpuTicks.idle - this._lastCpuSample.idle;
+          if (deltaTotal > 0) {
+            cpuPercent = (100 * Math.max(0, deltaTotal - Math.max(0, deltaIdle))) / deltaTotal;
+          }
+        }
+        this._lastCpuSample = cpuTicks;
+      }
+
       const memoryThreshold = this._settings.get_int("memory-threshold");
 
-      // Always update the panel indicator (even during cool-down
-      // or while the dialog is open) so the user sees live stats.
+      // Update Panel
       this._indicator?.updateDisplay(
+        cpuPercent,
         ramPercent,
         swapPercent,
         combinedPercent,
         memoryThreshold,
       );
 
-      // Guard: don't show a new dialog if one is already visible
-      // or if the cool-down window hasn't expired yet.
+      // Warning check
       if (this._dialogOpen || this._coolingDown) return;
 
       if (combinedPercent >= memoryThreshold) {
@@ -539,21 +553,6 @@ export default class MemoryGuardExtension extends Extension {
     }
   }
 
-  /* =========================================================
-   * MODAL DIALOG
-   * ========================================================= */
-
-  /**
-   * _showWarningDialog — creates and opens the MemoryWarningDialog.
-   *
-   * The dialog is modal (pushModal): it grabs all input so the
-   * user cannot interact with anything else until they press OK.
-   *
-   * @param {number} ramPercent      - current RAM usage %
-   * @param {number} swapPercent     - current Swap usage %
-   * @param {number} combinedPercent - current combined (RAM+Swap) usage %
-   * @param {number} memoryThreshold - configured memory threshold
-   */
   _showWarningDialog(
     ramPercent,
     swapPercent,
@@ -562,20 +561,18 @@ export default class MemoryGuardExtension extends Extension {
   ) {
     this._dialogOpen = true;
 
-    this._dialog = new MemoryWarningDialog({
+    this._dialog = new ResourceWarningDialog({
       ramPercent,
       swapPercent,
       combinedPercent,
       memoryThreshold,
       onClose: () => {
-        // Called when the user presses OK
         this._dialogOpen = false;
         this._dialog = null;
         this._startCooldown();
       },
     });
 
-    // open() calls pushModal internally, which grabs focus
     this._dialog.open();
   }
 }

@@ -1,9 +1,9 @@
 {
-  "name": "System Memory Guard",
-  "description": "Monitors RAM and Swap usage in real-time. Displays a blocking modal dialog when memory consumption exceeds user-defined thresholds, preventing accidental system freezes.",
-  "uuid": "memory-guard@haiphamngoc.dev",
+  "name": "Resource Guard",
+  "description": "Monitors RAM, Swap, and CPU usage in real-time. Displays a blocking modal dialog when memory consumption exceeds user-defined thresholds, preventing accidental system freezes.",
+  "uuid": "resource-guard@haiphamngoc.dev",
   "shell-version": ["45", "46", "47", "48"],
-  "settings-schema": "org.gnome.shell.extensions.memory-guard",
-  "url": "https://github.com/haiphamngoc-dev/memory-guard",
+  "settings-schema": "org.gnome.shell.extensions.resource-guard",
+  "url": "https://github.com/haiphamngoc-dev/resource-guard",
   "version": 1
 }

@@ -1,23 +1,23 @@
 /* ============================================================
- * System Memory Guard — Modal Dialog Styles
+ * Resource Guard — Modal Dialog Styles
  * ============================================================
  * These classes are applied to the custom ModalDialog so it
  * stands out clearly as a system-level warning.
  * ============================================================ */
 
 /* Main dialog container */
-.memory-guard-dialog .modal-dialog-content-box {
+.resource-guard-dialog .modal-dialog-content-box {
   padding: 24px 32px;
 }
 
 /* Warning icon at the top */
-.memory-guard-icon {
+.resource-guard-icon {
   color: #e74c3c;
   margin-bottom: 16px;
 }
 
 /* Title text */
-.memory-guard-title {
+.resource-guard-title {
   font-size: 18pt;
   font-weight: bold;
   color: #e74c3c;
@@ -26,7 +26,7 @@
 }
 
 /* Body / detail text */
-.memory-guard-body {
+.resource-guard-body {
   font-size: 11pt;
   color: #deddda;
   margin-bottom: 8px;
@@ -34,7 +34,7 @@
 }
 
 /* Percentage highlight */
-.memory-guard-percent {
+.resource-guard-percent {
   font-size: 13pt;
   font-weight: bold;
   color: #f9e44c;
@@ -46,23 +46,29 @@
  * Panel Indicator Styles
  * ============================================================ */
 
-/* Indicator icon in the top panel */
-.memory-guard-indicator-icon {
+/* Separate container for indicators */
+.resource-guard-cpu-box,
+.resource-guard-mem-box {
+  margin: 0px 4px;
+}
+
+/* Indicator icons in the top panel */
+.resource-guard-indicator-icon {
   margin-right: 4px;
 }
 
-/* Percentage label next to the icon */
-.memory-guard-indicator-label {
+/* Percentage labels next to the icons */
+.resource-guard-indicator-label {
   font-size: 13px;
   font-weight: bold;
 }
 
-/* Warning state (combined >= 70%) */
-.memory-guard-warning {
+/* Warning state (usage >= 70%) */
+.resource-guard-warning {
   color: #f9e44c;
 }
 
-/* Critical state (combined >= threshold) */
-.memory-guard-critical {
+/* Critical state (usage >= threshold) */
+.resource-guard-critical {
   color: #e74c3c;
 }
